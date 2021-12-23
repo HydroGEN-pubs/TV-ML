@@ -13,6 +13,8 @@ This repo contains *example* 2D and 3D workflows to train and evaluate ML emulat
 
 4. YAML file database with user and model information (`workflow.yaml`).  This yaml file should be edited to reflect the user's paths, the location of the ParFlow simulations (`local_path`) and the ML model to be used (`ml_model`).
 
+5. Helper modules and model definitions (`HydroGEN/`).
+
 **Reference**
 <Br>
 *Maxwell, R.M.; Condon, L.E.; Melchior, P. A Physics-Informed, Machine Learning Emulator of a 2D Surface Water Model: What Temporal Networks and Simulation-Based Inference Can Help Us Learn about Hydrologic Processes. Water 2021, 13, 3633. https://doi.org/10.3390/w13243633*
