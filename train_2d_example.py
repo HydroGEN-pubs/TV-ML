@@ -32,7 +32,8 @@ print(DEVICE)
 
 # %%
 # USER settings
-
+# load command line arguments, the workflow path, yaml config file from the command line generated
+# by the run_workflow.sh script. 
 config_file = sys.argv[1]
 this_file = sys.argv[0]
 run_config = sys.argv[2]
