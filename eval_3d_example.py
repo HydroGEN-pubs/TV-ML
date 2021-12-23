@@ -19,6 +19,7 @@ import importlib
 import yaml
 import shutil
 from scipy import stats
+
 import torch
 import torch.nn as nn
 import torchvision
@@ -29,43 +30,38 @@ from functools import reduce
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # %%
 # load command line arguments, the workflow path, yaml config file from the command line generated
-# by the run_workflow.sh script.  
-config_file = sys.argv[1]  
+# by the run_workflow.sh script. 
+config_file = sys.argv[1]
 this_file = sys.argv[0]
 run_config = sys.argv[2]
 print("Using config file:", config_file)
 
-#  %%
+# %%
 print("---------------------------------------------")
 print("Loading metadata, setting up model grid info")
 print("---------------------------------------------")
 print()
 
-# USER settings
+#Run selection settings
 get_from_csv = True #if false run list will be generated from directory
 n_run_eval = -1  # Number of runs to train on: -1 means train on all runs found
 run_pick = 'Random' #'Random' to pick runs randomly other option 'First' to select the first n runs
-shuffle = True # Shuffle the run definition list 
+shuffle = True # Shuffle the rundefinition list 
 
-N = -1  #time steps per run to use set =-1 to set this by the run length. 
-nchannel = 5 #number of input channels that will be used for training
+N =-1  #time steps per run to use set =-1 to set this by the run length. @RMM -1 currently broken 
+nchannel = 4 #number of input channels that will be used for training
 
 # Choose the axis you are are taking a slice along and the layer to be used
 # this will take you from 3D inputs to 2D  slices
 slice_axis = 3  #1=x, 2=y, 3=z
 lpick = 0 # choose a layer for slicing 3D data into 2D
 
-plot_runs = True 
 plot_runs = False
-
 plot_summary=True
 
 print_verbose = False
 
-# Max / Min Pressure tracker
-PFmaxP=0.0
-PFminP=0.0
-# %%
+
 # %%
 # setting up run directories from the yaml file
 file = open(config_file)
@@ -95,10 +91,8 @@ model_path = os.path.join(run_path, (run_name + '.pt'))
 
 # make archive copies of the input files and this file
 shutil.copyfile(config_file, os.path.join(run_path, ("eval_"+config_file)))
-
 shutil.copy2(this_file, run_path)
-#  %%
-
+# %%
 import Shapes
 from Shapes import PFslice2D
 import utilities as utilities
@@ -107,6 +101,7 @@ import eval_tools as evtools
 from parflow import Run
 from data_access import DataAccessor, MLArrayBuilder
 from transform import float32_clamp_scaling
+
 # %%
 #loop over the evaluation ensembles to be evaluated
 for ens in range(len(eval_ens_list)):
@@ -116,6 +111,7 @@ for ens in range(len(eval_ens_list)):
     eval_name = run_name + "_Eval." + eval_ens
     print("Evaluating Ensemble:", eval_ens)
 
+    # Get the run information
     # Get a full list of run definitions available
     if get_from_csv== False:
         run_definitions_all = utilities.GetRunsFromFolder(ensemble_path)
@@ -143,17 +139,18 @@ for ens in range(len(eval_ens_list)):
         run_definitions  = [run_definitions[i] for i in ilist]
         run_list = [run_list[i] for i in ilist]
 
+
     # %%
     # Setup transforms to get variables scaled from 0-1
-
-    PRESS_TRANSFL10 = float32_clamp_scaling(src_range=[0.0, .063], dst_range=[0, 1])
-    PRESS_TRANSF = float32_clamp_scaling(src_range=[0.0, .07], dst_range=[0, 1])
+    PRESS_TRANSFL10 = float32_clamp_scaling(src_range=[-5, -1], dst_range=[0, 1])
+    PRESS_TRANSF = float32_clamp_scaling(src_range=[0, .07], dst_range=[0, 1])
     PERM_TRANSF = float32_clamp_scaling(src_range=[0, 1], dst_range=[0, 1])
     SATUR_TRANSF = float32_clamp_scaling(src_range=[0, 1], dst_range=[0,1])
     SLOPE_TRANSF = float32_clamp_scaling(src_range=[-0.2, 0.2], dst_range=[-1, 1])
-    MAXP_TRANF = float32_clamp_scaling(src_range=[0.0, 0.02], dst_range=[0, 1])
+    MAXP_TRANF = float32_clamp_scaling(src_range=[-0.02, 0.0], dst_range=[-1, 0])
     MANN_TRANSF = float32_clamp_scaling(src_range=[5.00E-06, 2.08E-05], dst_range=[0, 1])
-    INV_PRESS_TRANSFL10 = float32_clamp_scaling(src_range=[0, 1], dst_range=[0.0, 0.063])
+    INV_PRESS_TRANSFL10 = float32_clamp_scaling(src_range=[0, 1], dst_range=[-5, -1])
+    INV_PRESS_TRANSF = float32_clamp_scaling(src_range=[0, 1], dst_range=[0.0, 0.063])
     # %%
     # Read in run[0] to get the static information
     run_definition = run_definitions[0]
@@ -211,11 +208,9 @@ for ens in range(len(eval_ens_list)):
     model.eval()
     print(model)
 
-    # set up hydrograph array
-    # column 1 time, then PF=0 or ML=1, then n_run_eval
-    hydrograph = np.zeros((N,2,n_run))
-    outlet_metrics = np.zeros((n_run, 8))
-    outlet_loc = [0, int(np.floor(n_dim1/2))] # location of the outlet point where metrics will be recorded
+    # set up hydrograph array for the outlet
+    # column 1 time, then PF=0 or ML=1, then n_run
+    hydrograph = np.zeros((N, 2, n_run))
 
     eval_metrics = np.zeros((n_run, 22))
     #column names for eval metrics
@@ -231,10 +226,14 @@ for ens in range(len(eval_ens_list)):
                 'Spearman_hydrograph','PF_sum_hydrograph',
                 'ML_sum_hydrograph']
 
+    # location of the outlet point where metrics will be recorded
+    outlet_loc = [0, int(np.floor(n_dim1/2))]
+
     count = 0
     for run_definition in run_definitions:
         count += 1
         progress = int(100 * count / len(run_definitions))
+
 
         # ----------------------------------------
         # # Setup run from ensemble
@@ -251,11 +250,13 @@ for ens in range(len(eval_ens_list)):
         if N == -1:
             N = len(data.times)
 
-        #--------
+
+        # ___
         # Setup the static variables you would like to use
-        # -------
-        maxp = np.abs(run.Patch.z_upper.BCPressure.rain.Value)
+
+        maxp = run.Patch.z_upper.BCPressure.rain.Value
         time_application = int(run.Cycle.rainrec.rain.Length)
+
 
         Max_Precip = np.zeros((n_dim2, n_dim1))
         Max_Precip += maxp
@@ -264,7 +265,9 @@ for ens in range(len(eval_ens_list)):
         # Setup the input arrays, the model input is just one timestep (the first one)
         # and the model comparison is now all the timesteps read from that PF run
         # Note there is no label vector now
-        input_temp = np.zeros((1, nchannel, n_dim2, n_dim1))
+
+        input_temp = np.zeros((1, nchannel, N, n_dim2, n_dim1))
+
         #Pressure at time t=0
         data.time = data.times[0]
 
@@ -272,14 +275,6 @@ for ens in range(len(eval_ens_list)):
         model_output = np.zeros((N, n_dim2, n_dim1))
         # create a PF output vector
         PF_output = np.zeros((N, n_dim2, n_dim1))
-
-        #Pressure at time t=0, input to ML and PF out array
-        data.time = 0
-        model_output[0,:,:] = PFslice2D(data.pressure, slice_axis, lpick)
-        PF_output[0,:,:] = PFslice2D(data.pressure, slice_axis, lpick)
-        hydrograph[0,1,count-1] = evtools.calc_hydrograph(model_output[0,0,12],data.slope_y[0,0,12],data.mannings[0,0,12])
-        hydrograph[0, 0, count-1] = evtools.calc_hydrograph(
-                PF_output[0, 0, 12], data.slope_y[0, 0, 12], data.mannings[0, 0, 12])
         if print_verbose == True:
             print()
             print("-----------------------------------------------")
@@ -292,49 +287,47 @@ for ens in range(len(eval_ens_list)):
             print("Reading Static Variables")
             print()
             print("-- Precip Inputs --")
-            print(maxp)     
+            print(maxp)
             # Make Predictions
             print("-----------------------------------")
             print(" Make Predictions")
             print
+
         # freeze the model
         model.use_dropout = False
         for parameter in model.parameters():
             parameter.requires_grad = False
         # 
         # load all the transient variables for timesteps, and normalize the model inputs only
-        for ii in range(0, N-1):
+        for ii in range(0, N):
             print("Batch Progress: %3.0f%%  model progress: %3.0f%% " % (progress, 100*(ii/N)), end='\r')
-            data.time = ii
-            input_temp[0, 0, :, :] = SLOPE_TRANSF(PFslice2D(data.slope_x, slice_axis, lpick))
-            input_temp[0, 1, :, :] = SLOPE_TRANSF(PFslice2D(data.slope_y, slice_axis, lpick))
-            input_temp[0, 2, :, :] = MANN_TRANSF(PFslice2D(data.mannings, slice_axis, lpick))
+            input_temp[0, 0, ii, :, :] = SLOPE_TRANSF(PFslice2D(data.slope_x, slice_axis, lpick))
+            input_temp[0, 1, ii, :, :] = SLOPE_TRANSF(PFslice2D(data.slope_y, slice_axis, lpick))
+            input_temp[0, 2, ii, :, :] = MANN_TRANSF(PFslice2D(data.mannings, slice_axis, lpick))
             if (ii<=time_application):
-                input_temp[0, 3, :, :] = MAXP_TRANF(Max_Precip)
+                input_temp[0, 3, ii, :, :] = MAXP_TRANF(Max_Precip)
             else:
-                input_temp[0, 3, :, :] = MAXP_TRANF(Zero_Precip)
-            data.time = ii
-            input_temp[0,4,:,:] = PRESS_TRANSFL10(model_output[ii,:,:])
+                input_temp[0, 3, ii, :, :] = MAXP_TRANF(Zero_Precip)
 
-            
+            data.time = data.times[ii]
+            data.time = ii
+
             # copy into PF model output array 
-            # convert the inputs and outputs (labels) from the temp NumPy vectors to Torch format
-            predict_input = torch.from_numpy(input_temp)
-            # convert to Floats
-            predict_input = predict_input.type(torch.FloatTensor).to(DEVICE)
-            prediction = model(predict_input)
-            # copy into ML model output array
-            #
-            model_output[ii+1,:,:] = INV_PRESS_TRANSFL10(
-                np.reshape(prediction.data.cpu().numpy(), (n_dim2, n_dim1)))
-            hydrograph[ii+1,1,count-1] = evtools.calc_hydrograph(model_output[ii+1,0,12],data.slope_y[0,0,12],data.mannings[0,0,12])
-            data.time = ii+1
-            PF_output[ii+1,:, :] = PFslice2D(np.where(data.pressure <= 0.0, 0.0, data.pressure), slice_axis, lpick)
-            PFmaxP=max(np.max(PF_output[ii,:,:]), PFmaxP)
-            PFminP=min(np.min(PF_output[ii,:,:]), PFminP)
-            hydrograph[ii+1, 0, count-1] = evtools.calc_hydrograph(
-                PF_output[ii+1, 0, 12], data.slope_y[0, 0, 12], data.mannings[0, 0, 12])
+            PF_output[ii,:, :] = PFslice2D(np.where(data.pressure <=0.0, 0.0, data.pressure), slice_axis, lpick)
+            hydrograph[ii, 0, count-1] = evtools.calc_hydrograph(
+                PF_output[ii, 0, 12], data.slope_y[0, 0, 12], data.mannings[0, 0, 12])
     
+        # convert the inputs and outputs (labels) from the temp NumPy vectors to Torch format
+        predict_input = torch.from_numpy(input_temp)
+        # convert to Floats
+        predict_input = predict_input.type(torch.FloatTensor).to(DEVICE)
+        prediction = model(predict_input)
+        # copy into ML model output array
+        #
+        model_output[:,:,:] = INV_PRESS_TRANSF(
+            np.reshape(prediction.data.cpu().numpy(), (N, n_dim2, n_dim1)))
+        hydrograph[:,1,count-1] = evtools.calc_hydrograph(model_output[:,0,12],data.slope_y[0,0,12],data.mannings[0,0,12])
+
         #_______________
         # Plot simulated and observed values and print overall RMSE
         #_______________
@@ -354,6 +347,7 @@ for ens in range(len(eval_ens_list)):
                 axs[ii,1].set_title('time: %4.1f' % (jj*.05))
                 axs[ii,1].imshow(PF_output[jj,:,:], cmap='hot') 
                 axs[ii,2].imshow(PF_output[jj,:,:]-model_output[jj,:,:], cmap='viridis_r')
+
             for axs in fig.get_axes():
                 axs.label_outer()
             plt.show()
@@ -364,6 +358,7 @@ for ens in range(len(eval_ens_list)):
         #Hydrograph peak value at every grid cell
         PF_peak = evtools.hydgrph_3D_peakval(PF_output)
         ML_peak = evtools.hydgrph_3D_peakval(model_output)
+
 
         #Time to peak at every grid cell
         PF_tpeak = evtools.hydgrph_3D_peaktime(PF_output, dt=run.TimeStep.Value)
@@ -377,15 +372,12 @@ for ens in range(len(eval_ens_list)):
         rmse_map = evtools.hydgrph_3D_rmse(model_output, PF_output)
 
         #RMSE between hydrographs at every grid cell
-        dif_map = evtools.hydgrph_3D_rmse(model_output, PF_output)
-
-        #RMSE between hydrographs at every grid cell
         dif_map = evtools.hydgrph_3D_cumdiff(model_output, PF_output)
 
         # Make a multi panel plot showing this
         if plot_runs == True:
             fig, ax = plt.subplots(4, 2, sharex='col', sharey='row',
-                                constrained_layout=False)
+                                   constrained_layout=False)
             ax[0, 0].imshow(PF_peak, cmap='viridis_r')
             ax[0, 1].imshow(ML_peak, cmap='viridis_r')
             ax[1, 0].imshow(PF_tpeak, cmap='viridis_r')
@@ -395,6 +387,7 @@ for ens in range(len(eval_ens_list)):
             ax[3, 0].imshow(rmse_map, cmap='viridis_r')
             ax[3, 1].imshow(dif_map, cmap='viridis_r')
             plt.show()
+
     # EM 0 'PF_peak_outlet'
     # EM 1 'ML_peak_outlet'
     # EM 2 'PF_peaktime_outlet'
@@ -447,12 +440,13 @@ for ens in range(len(eval_ens_list)):
         eval_metrics[(count-1), 21] = np.sum(hydrograph[:,1,(count-1)])
     print()
     # %%
-    # Write out csv's for the metrics and the hydrographs
+    # Write out csvs for the metrics and the hydrographs
     # Make a dataframe of the settings
     metrics_df = pd.DataFrame(eval_metrics, columns=eval_names)
-    metrics_df.index = run_list
+    metrics_df.index= run_list
     csvfile = os.path.join(run_path, (eval_name + '_ML_metrics.csv'))
     metrics_df.to_csv(csvfile, index=True)
+
 
     pf_df = pd.DataFrame(hydrograph[:, 0, :], columns=run_list)
     csvfile = os.path.join(run_path, (eval_name + '_PF_Hydographs.csv'))
@@ -462,12 +456,10 @@ for ens in range(len(eval_ens_list)):
     csvfile = os.path.join(run_path, (eval_name + '_ML_Hydrographs.csv'))
     ml_df.to_csv(csvfile, index=False)
 
-    plotpdffile = os.path.join(
-        results_path, (eval_name + '_summary_plots.pdf'))
+    plotpdffile = os.path.join(results_path, (eval_name + '_summary_plots.pdf'))
     pp = PdfPages(plotpdffile)
 
-    markdownoutfile = os.path.join(
-        results_path, (eval_name + '_summary_stats.md'))
+    markdownoutfile = os.path.join(results_path, (eval_name + '_summary_stats.md'))
     markdownFile = open(markdownoutfile, 'w')
 
     # %%
@@ -482,6 +474,7 @@ for ens in range(len(eval_ens_list)):
         two = hydrograph[:,1,:].mean(axis=1)
         mintwo = hydrograph[:,1,:].min(axis=1)
         maxtwo = hydrograph[:,1,:].max(axis=1)
+
         plt.plot(x_axis,one,label=('ParFlow'),color='blue', linewidth=3)
         plt.plot(x_axis,two,label=('PF-ML'),color='red', linewidth=3)
         plt.plot(x_axis,minone,color='blue', linewidth=1, dashes=[3,1])
@@ -490,10 +483,12 @@ for ens in range(len(eval_ens_list)):
         plt.plot(x_axis,maxtwo,color='red', linewidth=1,dashes=[3,1])
         plt.fill_between(x_axis, minone, maxone,color='blue', alpha=0.1)
         plt.fill_between(x_axis, mintwo, maxtwo,color='red', alpha=0.1)
+
         plt.ylabel("Outflow [m^2/h]")
         plt.xlabel("Time [h]")
         plt.title("Hydrograph Ensemble Comparison")
         plt.legend()
+
         plt.savefig(pp, format='pdf')
         plt.close()
 
@@ -538,6 +533,7 @@ for ens in range(len(eval_ens_list)):
         ax[2].set_ylim(plotmin, plotmax)
         ax[2].set_xlabel("ParFlow")
         ax[2].set_ylabel("ML")
+
         plt.savefig(pp, format='pdf')
         plt.close()
 
@@ -588,6 +584,7 @@ for ens in range(len(eval_ens_list)):
     print(" Mean, Var over all realizations")
     from prettytable import MARKDOWN
 
+
     print(table)
     table.set_style(MARKDOWN)
     print(file = markdownFile)
@@ -596,6 +593,7 @@ for ens in range(len(eval_ens_list)):
     print("# Mean, Var over all realizations", file=markdownFile)
     print(file=markdownFile)
     print(table, file = markdownFile)
+
 
     table = PrettyTable()
     table.field_names = ['Quantity','RMSE','Pearson', 'Spearman']
@@ -622,12 +620,4 @@ for ens in range(len(eval_ens_list)):
     pp.close()
     markdownFile.close()
 
-
     # %%
-    print()
-    print("Max PF Pressure:",PFmaxP)
-    print("Min PF Pressure:",PFminP)
-    print()
-    print()
-    print("===========================")
-    print()
